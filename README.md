@@ -137,6 +137,15 @@ timeout, list, pause, resume and kill against a fake orchestrator, with the
 race detector on. It checks the REST contract without KVM. `test/sdk/lifecycle.mjs --exec`
 adds commands and files and needs a real install.
 
+Verified on a real install (Debian 13, kernel 6.12, `e2b` 2.56.0 for JS and
+Python): base template build, `Template.build` with a `COPY` upload,
+commands, files, PTY, a sandbox port via `getHost()`, pause and resume with
+memory kept, timeout kill and auto-pause, and a container restart (paused
+sandboxes resume, lost running ones are dropped).
+
+`.github/workflows/e2e.yml` runs both: the fake suite, and the real stack on
+the runner's KVM.
+
 ## Upgrading E2B
 
 See [UPSTREAM.md](UPSTREAM.md).
