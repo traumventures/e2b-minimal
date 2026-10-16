@@ -157,30 +157,76 @@ func (s *Server) parseTimeout(sec *int64) (time.Duration, error) {
 	return d, nil
 }
 
-func egressConfig(n *networkBody) *orchestrator.SandboxNetworkEgressConfig {
-	if n == nil || (len(n.AllowOut) == 0 && len(n.DenyOut) == 0) {
-		return nil
-	}
-	e := &orchestrator.SandboxNetworkEgressConfig{}
-	isCIDR := func(v string) bool {
-		if _, _, err := net.ParseCIDR(v); err == nil {
-			return true
-		}
+// Mirrors E2B's API (packages/api/internal/orchestrator/create_instance.go):
+// addresses become CIDRs, allowed domains also allow the default nameserver
+// so the sandbox can resolve them, and allowInternetAccess=false blocks all
+// traffic, overriding denyOut. The orchestrator itself does not read
+// allow_internet_access.
+const (
+	allTraffic        = "0.0.0.0/0"
+	defaultNameserver = "8.8.8.8/32"
+)
 
-		return net.ParseIP(v) != nil
+func isIPOrCIDR(v string) bool {
+	if _, _, err := net.ParseCIDR(v); err == nil {
+		return true
 	}
-	for _, v := range n.AllowOut {
-		if isCIDR(v) {
-			e.AllowedCidrs = append(e.AllowedCidrs, v)
-		} else {
-			e.AllowedDomains = append(e.AllowedDomains, v)
+
+	return net.ParseIP(v) != nil
+}
+
+func toCIDR(v string) string {
+	if strings.Contains(v, "/") {
+		return v
+	}
+
+	return v + "/32"
+}
+
+func egressConfig(n *networkBody, allowInternet *bool) *orchestrator.SandboxNetworkEgressConfig {
+	e := &orchestrator.SandboxNetworkEgressConfig{}
+	if n != nil {
+		for _, v := range n.AllowOut {
+			if isIPOrCIDR(v) {
+				e.AllowedCidrs = append(e.AllowedCidrs, toCIDR(v))
+			} else {
+				e.AllowedDomains = append(e.AllowedDomains, v)
+			}
+		}
+		if len(e.AllowedDomains) > 0 {
+			e.AllowedCidrs = append(e.AllowedCidrs, defaultNameserver)
+		}
+		for _, v := range n.DenyOut {
+			e.DeniedCidrs = append(e.DeniedCidrs, toCIDR(v))
 		}
 	}
-	for _, v := range n.DenyOut {
-		e.DeniedCidrs = append(e.DeniedCidrs, v)
+	if allowInternet != nil && !*allowInternet {
+		e.DeniedCidrs = []string{allTraffic}
+	}
+	if len(e.AllowedCidrs) == 0 && len(e.AllowedDomains) == 0 && len(e.DeniedCidrs) == 0 {
+		return nil
 	}
 
 	return e
+}
+
+// validateNetwork applies E2B's rules: denyOut takes only addresses, and
+// domains in allowOut need denyOut 0.0.0.0/0 to mean anything.
+func validateNetwork(n *networkBody) error {
+	if n == nil {
+		return nil
+	}
+	for _, v := range n.DenyOut {
+		if !isIPOrCIDR(v) {
+			return fmt.Errorf("denyOut only accepts IP addresses and CIDR ranges: %s", v)
+		}
+	}
+	hasDomain := slices.ContainsFunc(n.AllowOut, func(v string) bool { return !isIPOrCIDR(v) })
+	if hasDomain && !slices.Contains(n.DenyOut, allTraffic) {
+		return errors.New("allow out contains domains but deny out is missing 0.0.0.0/0 (ALL_TRAFFIC)")
+	}
+
+	return nil
 }
 
 func (s *Server) createSandbox(w http.ResponseWriter, r *http.Request) {
@@ -199,12 +245,10 @@ func (s *Server) createSandbox(w http.ResponseWriter, r *http.Request) {
 	if body.TemplateID == "" {
 		body.TemplateID = "base"
 	}
-	for _, deny := range body.Network.denyOut() {
-		if _, _, err := net.ParseCIDR(deny); err != nil && net.ParseIP(deny) == nil {
-			writeError(w, http.StatusBadRequest, "denyOut only accepts IP addresses and CIDR ranges: "+deny)
+	if err := validateNetwork(body.Network); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
 
-			return
-		}
+		return
 	}
 
 	var (
@@ -289,14 +333,6 @@ func (s *Server) createSandbox(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, s.toResponse(sb))
 }
 
-func (n *networkBody) denyOut() []string {
-	if n == nil {
-		return nil
-	}
-
-	return n.DenyOut
-}
-
 func firstName(names []string) string {
 	if len(names) == 0 {
 		return ""
@@ -341,7 +377,7 @@ func (s *Server) boot(ctx context.Context, sb *store.Sandbox, resume bool) error
 		alias := sb.Alias
 		cfg.Alias = &alias
 	}
-	egress := egressConfig(&networkBody{AllowOut: sb.AllowOut, DenyOut: sb.DenyOut})
+	egress := egressConfig(&networkBody{AllowOut: sb.AllowOut, DenyOut: sb.DenyOut}, sb.AllowInternetAccess)
 	if traffic := sb.TrafficAccessToken; egress != nil || traffic != "" {
 		cfg.Network = &orchestrator.SandboxNetworkConfig{Egress: egress}
 		if traffic != "" {
