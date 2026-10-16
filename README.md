@@ -10,7 +10,7 @@ No Redis, ClickHouse, dashboard, teams or users. Optional pieces:
 
 | Piece | Default | Optional |
 | --- | --- | --- |
-| API state (templates, builds, sandboxes) | JSON file in `E2B_DATA_DIR` | Postgres (`DATABASE_URL`) |
+| API state (templates, builds, sandboxes) | SQLite file in `E2B_DATA_DIR` | Postgres (`DATABASE_URL`) |
 | Templates and snapshots | `E2B_DATA_DIR/storage` | any S3-compatible bucket (`S3_BUCKET`) |
 | Sandbox disks, snapshot cache | `E2B_DATA_DIR` on the host (own disk or mount if you like) | |
 
@@ -100,16 +100,16 @@ Unsupported routes answer `501`.
 | `LISTEN_ADDR` | `:3000` | API listen address (host network) |
 | `PUBLIC_URL` | from the request | How clients reach the API; used for local template upload URLs |
 | `SANDBOX_DOMAIN` | unset | Domain returned for `getHost()` URLs |
-| `DATABASE_URL` | unset | Postgres for the API state; unset uses `E2B_DATA_DIR/minimal/state.json` |
+| `DATABASE_URL` | unset | Postgres for the API state; unset uses SQLite in `E2B_DATA_DIR/minimal/state.db` (an old `state.json` is imported once) |
 | `S3_BUCKET` | unset | Bucket for templates and snapshots; unset keeps them in `E2B_DATA_DIR/storage` |
 | `S3_BUILD_CACHE_BUCKET` | unset | Bucket for the template build cache (layers, uploaded files) |
 | `S3_ENDPOINT`, `S3_REGION`, `S3_FORCE_PATH_STYLE` | AWS, unset, `true` | For S3-compatible stores (MinIO, SeaweedFS, R2, Hetzner, …) |
 | `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_REGION` | unset | S3 credentials |
 | `E2B_DATA_DIR` | `/var/lib/e2b` | Host directory for everything else |
 | `MEMORY_MODE` | `regular` | `regular` or `hugepages`, see below |
-| `SANDBOX_MEMORY_MAX` | unset (no limit) | MiB for all sandboxes together |
+| `SANDBOX_ALL_MEMORY_MAX` | unset (no limit) | MiB for all sandboxes together |
 | `SANDBOX_MEMORY_MIN` | `256` | MiB guaranteed to every running sandbox (`regular` only) |
-| `SANDBOX_CPU_MAX` | unset (no limit) | Cores for all sandboxes together |
+| `SANDBOX_ALL_CPU_MAX` | unset (no limit) | Cores for all sandboxes together |
 | `DEFAULT_CPU_COUNT`, `DEFAULT_MEMORY_MB` | all cores, `4096` | Size of `base` and of builds that do not ask: the most one sandbox can use |
 | `COLD_BOOT` | `false` | Boot new sandboxes instead of restoring the template's memory snapshot |
 | `HUGEPAGES` | `2048` | 2 MiB pages reserved on start (`hugepages` only) |
@@ -119,7 +119,7 @@ Unsupported routes answer `501`.
 | `PF_MIN_FREE_GIB` | `20` | Disk check in preflight |
 | `SKIP_HOST_SETUP` | `0` | `1` skips preflight, host setup and downloads |
 
-Only one API may use a Postgres database; a second one refuses to start.
+Only one API may use a Postgres database or a `state.db`; a second one refuses to start.
 
 ## Memory and CPU
 
@@ -131,7 +131,7 @@ one sandbox can use, not what it takes.
 it, and memory the guest frees goes back to the host within seconds (free
 page reporting). An idle sandbox takes about 30 MiB. Limits and guarantees:
 
-- `SANDBOX_MEMORY_MAX` caps all sandboxes together (`memory.max` on the
+- `SANDBOX_ALL_MEMORY_MAX` caps all sandboxes together (`memory.max` on the
   `e2b` cgroup), so the host never runs short.
 - Every running sandbox is guaranteed `SANDBOX_MEMORY_MIN` (`memory.min`).
   A create or resume that could not be guaranteed it, because the guarantees
@@ -156,7 +156,7 @@ that cannot get pages fails to start. The pool needs free, unfragmented memory
 on the host (best right after boot). Templates built in one mode only run in
 that mode.
 
-**CPU.** `SANDBOX_CPU_MAX` caps all sandboxes together (`cpu.max`); within
+**CPU.** `SANDBOX_ALL_CPU_MAX` caps all sandboxes together (`cpu.max`); within
 that, each sandbox uses up to its vCPUs.
 
 ## Security
@@ -175,7 +175,7 @@ Under `E2B_DATA_DIR` (default `/var/lib/e2b`):
 - `storage/`: templates, snapshots, build cache, unless they are on S3
 - `orchestrator/`: local cache of templates and snapshots in use
 - `fc-vm/`: running sandboxes
-- `minimal/state.json`: templates, builds, sandboxes, unless in Postgres
+- `minimal/state.db`: templates, builds, sandboxes (SQLite), unless in Postgres
 
 Fixed host paths: `/var/lib/e2b/bin` (orchestrator) and `/fc-*` (envd,
 kernel, Firecracker, BusyBox).
@@ -208,9 +208,9 @@ snapshots and build cache on S3 (SeaweedFS), a paused sandbox surviving a
 restart on that setup, a second API refused on the same database;
 `MEMORY_MODE=regular` with a 4 GiB template (idle sandbox ~30 MiB, 1.9 GiB
 touched and freed back to ~0.5 GiB within 10 s), admission (a sixth sandbox
-refused at `SANDBOX_MEMORY_MAX=6144`, `SANDBOX_MEMORY_MIN=1024`), an
+refused at `SANDBOX_ALL_MEMORY_MAX=6144`, `SANDBOX_MEMORY_MIN=1024`), an
 overload by three sandboxes taking 3 GiB each (two of them killed by the API,
-the other three alive, no kernel OOM kill), and `SANDBOX_CPU_MAX=4` holding a
+the other three alive, no kernel OOM kill), and `SANDBOX_ALL_CPU_MAX=4` holding a
 12-vCPU sandbox at 4.0 cores.
 
 `.github/workflows/e2e.yml` runs both: the fake suite, and the real stack on

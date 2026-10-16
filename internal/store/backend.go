@@ -6,8 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
-	"path/filepath"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -21,55 +19,6 @@ type backend interface {
 	save(ctx context.Context, d *data) error
 	close()
 }
-
-type fileBackend struct{ path string }
-
-func openFile(dir string) (*fileBackend, error) {
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return nil, fmt.Errorf("create data dir: %w", err)
-	}
-
-	return &fileBackend{path: filepath.Join(dir, "state.json")}, nil
-}
-
-func (f *fileBackend) load(_ context.Context, d *data) error {
-	raw, err := os.ReadFile(f.path)
-	switch {
-	case errors.Is(err, os.ErrNotExist):
-		return nil
-	case err != nil:
-		return fmt.Errorf("read state: %w", err)
-	}
-	if err := json.Unmarshal(raw, d); err != nil {
-		return fmt.Errorf("parse %s: %w", f.path, err)
-	}
-	if d.Templates == nil {
-		d.Templates = map[string]*Template{}
-	}
-	if d.Sandboxes == nil {
-		d.Sandboxes = map[string]*Sandbox{}
-	}
-
-	return nil
-}
-
-func (f *fileBackend) save(_ context.Context, d *data) error {
-	raw, err := json.MarshalIndent(d, "", "  ")
-	if err != nil {
-		return fmt.Errorf("encode state: %w", err)
-	}
-	tmp := f.path + ".tmp"
-	if err := os.WriteFile(tmp, raw, 0o600); err != nil {
-		return fmt.Errorf("write state: %w", err)
-	}
-	if err := os.Rename(tmp, f.path); err != nil {
-		return fmt.Errorf("replace state: %w", err)
-	}
-
-	return nil
-}
-
-func (f *fileBackend) close() {}
 
 // pgBackend keeps one row per template and per sandbox, the record as JSONB.
 // It holds a session advisory lock for its lifetime, so a second API pointed
@@ -145,22 +94,10 @@ func (p *pgBackend) load(ctx context.Context, d *data) error {
 
 				return fmt.Errorf("postgres: load %s: %w", table, err)
 			}
-			if table == "e2b_templates" {
-				var t Template
-				if err := json.Unmarshal(raw, &t); err != nil {
-					rows.Close()
+			if err := decodeRow(table, id, raw, d); err != nil {
+				rows.Close()
 
-					return fmt.Errorf("postgres: template %s: %w", id, err)
-				}
-				d.Templates[id] = &t
-			} else {
-				var s Sandbox
-				if err := json.Unmarshal(raw, &s); err != nil {
-					rows.Close()
-
-					return fmt.Errorf("postgres: sandbox %s: %w", id, err)
-				}
-				d.Sandboxes[id] = &s
+				return err
 			}
 		}
 		rows.Close()
@@ -252,4 +189,24 @@ func splitKey(key string) (table, id string) {
 func (p *pgBackend) close() {
 	p.lock.Release()
 	p.pool.Close()
+}
+
+// decodeRow puts one stored record into d.
+func decodeRow(table, id string, raw []byte, d *data) error {
+	if table == "e2b_templates" {
+		var t Template
+		if err := json.Unmarshal(raw, &t); err != nil {
+			return fmt.Errorf("template %s: %w", id, err)
+		}
+		d.Templates[id] = &t
+
+		return nil
+	}
+	var s Sandbox
+	if err := json.Unmarshal(raw, &s); err != nil {
+		return fmt.Errorf("sandbox %s: %w", id, err)
+	}
+	d.Sandboxes[id] = &s
+
+	return nil
 }

@@ -19,6 +19,7 @@ jobs:
         with:
           node-version: 22
       - run: go vet ./...
+      - run: go test -race ./...
       - run: npm install --no-audit --no-fund
         working-directory: test/sdk
       - run: python3 -m pip install --user --break-system-packages e2b
@@ -49,7 +50,7 @@ jobs:
           {
             echo "E2B_API_KEY=e2b_$(openssl rand -hex 20)"
             echo "MEMORY_MODE=regular"
-            echo "SANDBOX_MEMORY_MAX=6144"
+            echo "SANDBOX_ALL_MEMORY_MAX=6144"
             echo "DEFAULT_MEMORY_MB=2048"
             echo "PF_MIN_FREE_GIB=10"
           } > .env

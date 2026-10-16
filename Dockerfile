@@ -13,7 +13,7 @@ WORKDIR /src/packages/orchestrator
 RUN --mount=type=cache,target=/root/.cache/go-build --mount=type=cache,target=/go/pkg/mod \
     make build-local COMMIT_SHA="$RUNTIME_COMMIT" VERSION=e2b-minimal BUILD_ARCH=amd64
 
-FROM golang:1.25-alpine AS api
+FROM golang:1.26-alpine AS api
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download

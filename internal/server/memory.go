@@ -70,7 +70,7 @@ func (s *Server) admit(sandboxID string) error {
 		}
 	})
 	if promised+minBytes > limit-s.headroom(limit) {
-		return fmt.Errorf("%w: %d MiB promised to running sandboxes, %d MiB more would exceed SANDBOX_MEMORY_MAX (%d MiB)",
+		return fmt.Errorf("%w: %d MiB promised to running sandboxes, %d MiB more would exceed SANDBOX_ALL_MEMORY_MAX (%d MiB)",
 			errNoMemory, promised>>20, s.cfg.MemoryMinMB, limit>>20)
 	}
 	if used+minBytes > limit-s.headroom(limit) {

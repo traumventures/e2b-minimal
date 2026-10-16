@@ -24,7 +24,7 @@ import (
 const (
 	defaultTimeout = 300 * time.Second
 	// syncInterval is how often sandboxes the orchestrator lost (a crash, an
-	// OOM kill at SANDBOX_MEMORY_MAX) are dropped from the store.
+	// OOM kill at SANDBOX_ALL_MEMORY_MAX) are dropped from the store.
 	syncInterval = 5 * time.Second
 )
 

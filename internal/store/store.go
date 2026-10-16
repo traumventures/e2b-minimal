@@ -1,4 +1,4 @@
-// Package store keeps the little state the API needs in one JSON file:
+// Package store keeps the little state the API needs in one SQLite file or Postgres:
 // templates with their builds, and sandboxes (running or paused). It replaces
 // the Postgres/Redis/ClickHouse trio of the full E2B API.
 package store
@@ -132,7 +132,7 @@ type data struct {
 }
 
 // Store keeps all state in memory under one mutex and writes every change
-// through to a backend: a JSON file, or Postgres when a database URL is set.
+// through to a backend: a SQLite file, or Postgres when a database URL is set.
 type Store struct {
 	mu      sync.Mutex
 	backend backend
@@ -140,7 +140,7 @@ type Store struct {
 }
 
 type Options struct {
-	// Dir holds state.json when no DatabaseURL is set.
+	// Dir holds state.db (SQLite) when no DatabaseURL is set.
 	Dir string
 	// DatabaseURL selects the Postgres backend (postgres://...).
 	DatabaseURL string
@@ -154,7 +154,7 @@ func Open(ctx context.Context, opts Options) (*Store, error) {
 	if opts.DatabaseURL != "" {
 		b, err = openPostgres(ctx, opts.DatabaseURL)
 	} else {
-		b, err = openFile(opts.Dir)
+		b, err = openSQLite(ctx, opts.Dir)
 	}
 	if err != nil {
 		return nil, err

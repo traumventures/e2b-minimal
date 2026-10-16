@@ -17,7 +17,7 @@ case "$DATA" in /*) ;; *) die "E2B_DATA_DIR must be an absolute host path" ;; es
 mkdir -p "/host$DATA"/{storage/templates,storage/build-cache,orchestrator,fc-vm,minimal}
 
 # Memory mode. regular (default): sandboxes use ordinary host memory on
-# demand, guest-freed memory goes back to the host, and SANDBOX_MEMORY_MAX
+# demand, guest-freed memory goes back to the host, and SANDBOX_ALL_MEMORY_MAX
 # caps all sandboxes together. hugepages: E2B's default, every sandbox draws
 # from a fixed pool of 2 MiB pages reserved at start (HUGEPAGES).
 MEMORY_MODE="${MEMORY_MODE:-regular}"
@@ -46,13 +46,13 @@ install -D -m 0755 /opt/e2b/bin/orchestrator /host/var/lib/e2b/bin/orchestrator
 CG=/sys/fs/cgroup/e2b
 mkdir -p "$CG"
 echo "+cpu +memory" > "$CG/cgroup.subtree_control"
-if [ -n "${SANDBOX_CPU_MAX:-}" ]; then
-  echo "$((SANDBOX_CPU_MAX * 100000)) 100000" > "$CG/cpu.max"
+if [ -n "${SANDBOX_ALL_CPU_MAX:-}" ]; then
+  echo "$((SANDBOX_ALL_CPU_MAX * 100000)) 100000" > "$CG/cpu.max"
 else
   echo "max 100000" > "$CG/cpu.max"
 fi
 mem_max=max
-if [ -n "${SANDBOX_MEMORY_MAX:-}" ]; then mem_max=$((SANDBOX_MEMORY_MAX * 1024 * 1024)); fi
+if [ -n "${SANDBOX_ALL_MEMORY_MAX:-}" ]; then mem_max=$((SANDBOX_ALL_MEMORY_MAX * 1024 * 1024)); fi
 echo "$mem_max" > "$CG/memory.max"
 echo 0 > "$CG/memory.swap.max" 2>/dev/null || true
 log "all sandboxes together: cpu.max=$(cat "$CG/cpu.max") memory.max=$(cat "$CG/memory.max")"
