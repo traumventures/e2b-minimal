@@ -1,0 +1,6 @@
+.env
+/e2b-minimal
+node_modules/
+.venv/
+test/sdk/bun.lock
+test/sdk/package-lock.json

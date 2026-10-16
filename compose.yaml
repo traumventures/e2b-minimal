@@ -1,0 +1,33 @@
+# One container. It needs the host's namespaces like E2B Embed's orchestrator:
+# Firecracker VMs, NBD devices and tap networking live on the host.
+name: e2b-minimal
+
+services:
+  e2b:
+    build: .
+    image: e2b-minimal:local
+    restart: unless-stopped
+    network_mode: host
+    pid: host
+    cgroup: host
+    privileged: true
+    environment:
+      E2B_API_KEY: ${E2B_API_KEY:?set E2B_API_KEY in .env}
+      LISTEN_ADDR: ${LISTEN_ADDR:-:3000}
+      PUBLIC_URL: ${PUBLIC_URL:-}
+      SANDBOX_DOMAIN: ${SANDBOX_DOMAIN:-}
+      HUGEPAGES: ${HUGEPAGES:-2048}
+      PF_MIN_FREE_GIB: ${PF_MIN_FREE_GIB:-20}
+      MAX_SANDBOX_HOURS: ${MAX_SANDBOX_HOURS:-24}
+      DEFAULT_CPU_COUNT: ${DEFAULT_CPU_COUNT:-2}
+      DEFAULT_MEMORY_MB: ${DEFAULT_MEMORY_MB:-512}
+    volumes:
+      # fetch-artifacts writes the binaries to the host and the API keeps its
+      # state next to the templates in /var/lib/e2b.
+      - /:/host
+    stop_grace_period: 60s
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "5"
