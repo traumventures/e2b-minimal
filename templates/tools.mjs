@@ -1,5 +1,5 @@
-// Template "tools": uv + Python, Bun, Typst and Tesseract (German and English)
-// on top of the base template.
+// Template "tools": uv (using the base image's Python), Bun and Typst on top
+// of the base template.
 //
 //   cd templates && npm install
 //   E2B_API_URL=... E2B_API_KEY=... node tools.mjs
@@ -10,23 +10,13 @@ import { Template } from 'e2b'
 const BUN_VERSION = '1.4.3'
 const UV_VERSION = '0.13.1'
 const TYPST_VERSION = '0.15.1'
-const PYTHON_VERSION = '3.13'
 
 export const tools = Template()
   .fromTemplate('base')
-  .aptInstall(
-    ['curl', 'ca-certificates', 'unzip', 'xz-utils', 'tesseract-ocr', 'tesseract-ocr-deu', 'tesseract-ocr-eng'],
-    { noInstallRecommends: true },
-  )
-  // uv into /usr/local/bin, and a uv-managed Python as the default `python`.
+  .aptInstall(['curl', 'ca-certificates', 'unzip', 'xz-utils'], { noInstallRecommends: true })
+  // uv into /usr/local/bin. It uses the base image's Python and never downloads one.
   .runCmd(
-    [
-      `curl -LsSf https://astral.sh/uv/${UV_VERSION}/install.sh | env UV_INSTALL_DIR=/usr/local/bin UV_NO_MODIFY_PATH=1 sh`,
-      `env UV_PYTHON_INSTALL_DIR=/opt/uv/python UV_PYTHON_BIN_DIR=/usr/local/bin uv python install ${PYTHON_VERSION} --default --preview-features python-install-default`,
-      'chmod -R a+rX /opt/uv',
-      // The base image ships Python 3.11 in /usr/local/bin; point python and python3 at 3.13.
-      'ln -sf python3.13 /usr/local/bin/python3 && ln -sf python3 /usr/local/bin/python',
-    ],
+    `curl -LsSf https://astral.sh/uv/${UV_VERSION}/install.sh | env UV_INSTALL_DIR=/usr/local/bin UV_NO_MODIFY_PATH=1 sh`,
     { user: 'root' },
   )
   // Bun, pinned.
@@ -47,8 +37,8 @@ export const tools = Template()
     ],
     { user: 'root' },
   )
-  .setEnvs({ UV_PYTHON_INSTALL_DIR: '/opt/uv/python', UV_PYTHON: PYTHON_VERSION, UV_LINK_MODE: 'copy' })
-  .runCmd('uv --version && python --version && bun --version && typst --version && tesseract --version | head -1')
+  .setEnvs({ UV_PYTHON_PREFERENCE: 'only-system', UV_PYTHON_DOWNLOADS: 'never', UV_LINK_MODE: 'copy' })
+  .runCmd('uv --version && python --version && bun --version && typst --version')
 
 if (import.meta.url === `file://${process.argv[1]}`) {
   const info = await Template.build(tools, 'tools', {
