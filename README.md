@@ -91,10 +91,21 @@ with Sandbox.create() as sbx:
     print(sbx.commands.run("echo hello from a microVM").stdout)
 ```
 
-Commands, PTY terminals, files, watchers and ports all work, since they talk
-to `envd` inside the VM. `sbx.getHost(8000)` returns
+Commands, PTY terminals, files, watchers, git helpers and ports all work,
+since they talk to `envd` inside the VM. `sbx.getHost(8000)` returns
 `8000-<sandboxID>.<SANDBOX_DOMAIN>`; point a wildcard DNS record for
 `SANDBOX_DOMAIN` at the host to reach sandbox ports.
+
+### Network rules
+
+Same rules as on E2B Cloud:
+
+```js
+await Sandbox.create({ allowInternetAccess: false })                          // no outbound traffic
+await Sandbox.create({ network: { denyOut: ['1.1.1.1/32'] } })                // block addresses
+await Sandbox.create({ network: { allowOut: ['pypi.org'], denyOut: ['0.0.0.0/0'] } })  // only these domains
+await Sandbox.create({ network: { allowPublicTraffic: false } })              // ports need the traffic token
+```
 
 ### Templates
 
@@ -112,6 +123,12 @@ const tpl = Template()
 await Template.build(tpl, 'data-tools')
 // later: Sandbox.create('data-tools')
 ```
+
+All template builder steps work, including `fromDockerfile`, the distro
+presets (Ubuntu, Debian, Python, Node, Bun, Alpine, Arch, Fedora), private
+registries with credentials, `setStartCmd`/`setReadyCmd` and
+`buildInBackground`. As on E2B, `ENV`/`setEnvs` apply during the build only,
+and `copy` writes files as root unless you pass `{ user }`.
 
 [`templates/tools.mjs`](templates/tools.mjs) is a complete example with uv,
 Bun and Typst.
@@ -197,10 +214,14 @@ The control plane covers create, connect, list, timeouts, pause and resume
 (also on timeout) and `Template.build`.
 
 Not supported: fork, the snapshot API, volumes, secrets, MCP, template tags,
-auto-resume on traffic and network updates after create. Those routes answer
-`501`.
+auto-resume on traffic, network updates after create and sandbox metrics.
+Those routes answer `501` (metrics: an empty list).
 
-**Method-by-method checklist: [COMPATIBILITY.md](COMPATIBILITY.md).**
+One caveat: `uploadUrl()`/`downloadUrl()` only work with host routing
+(`SANDBOX_DOMAIN` plus wildcard DNS, `E2B_DOMAIN` in the client). With
+`E2B_SANDBOX_URL` the SDK builds those URLs without the sandbox id.
+
+**Method-by-method checklist, with what was tested: [COMPATIBILITY.md](COMPATIBILITY.md).**
 
 ## Configuration
 
@@ -258,15 +279,20 @@ docker run --rm --privileged --pid host --network host -v /:/host \
 - `go test -race ./...`: store tests (SQLite persistence, locking, import).
 - `test/fake-e2e.sh`: the official JS and Python SDKs against a fake
   orchestrator, no KVM needed.
-- `node test/sdk/lifecycle.mjs --exec`: the full lifecycle against a real
-  install.
+- `node test/sdk/lifecycle.mjs --exec` and `python test/sdk/lifecycle.py --exec`:
+  the main lifecycle against a real install, per SDK.
+- `node test/sdk/compat.mjs [area...]`: every feature in
+  [COMPATIBILITY.md](COMPATIBILITY.md), one check each, against a real
+  install. Areas: `sandbox commands files pty git templates presets`. Set
+  `REGISTRY`, `REGISTRY_USER`, `REGISTRY_PASSWORD` to include the private
+  registry checks.
 
-CI runs all three, the last one on a GitHub runner with KVM.
+CI runs the store tests and the fake suite on every push, and the lifecycle
+and compat suites on a GitHub runner with KVM.
 
-Tested on a real host (Debian 13, kernel 6.12, `e2b` 2.56.0): template builds
-with uploads, commands, files, PTY, sandbox ports, pause and resume, timeouts
-and auto-pause, restarts, Postgres and S3 (SeaweedFS), the memory guarantee
-and overload handling, and the CPU cap.
+Last full run on a real host (Debian 13, kernel 6.12, `e2b` 2.56.0): 52 of 52
+compat checks, both lifecycle suites, plus Postgres and S3 (SeaweedFS),
+restarts, the memory guarantee and overload handling, and the CPU cap.
 
 ## Credits
 
