@@ -63,7 +63,7 @@ Then point the SDK at it. API and sandbox traffic share one address:
 ```bash
 export E2B_API_URL=http://your-host:3000
 export E2B_SANDBOX_URL=http://your-host:3000
-export E2B_API_KEY=unused     # the SDKs refuse to start without one; the server ignores it
+export E2B_API_KEY=any        # the SDKs refuse to start without one; the server ignores it
 ```
 
 There is no authentication by default: anyone who can reach port 3000 can

@@ -14,7 +14,7 @@ go build -o "$work/fakeorch" ./test/fakeorch
 "$work/fakeorch" -addr 127.0.0.1:15008 -http 127.0.0.1:15009 > "$work/fake.log" 2>&1 &
 sleep 1
 # No key on the server: the default. The SDKs still need some value.
-export E2B_API_KEY=unused
+export E2B_API_KEY=any
 env -u E2B_API_KEY ORCHESTRATOR_GRPC=127.0.0.1:15008 ORCHESTRATOR_HTTP=127.0.0.1:15009 \
 ORCHESTRATOR_PROXY=127.0.0.1:15007 LISTEN_ADDR=127.0.0.1:3991 \
 DATA_DIR="$work/data" E2B_KERNEL_VERSION=test \
