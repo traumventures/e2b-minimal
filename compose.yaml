@@ -16,11 +16,30 @@ services:
       LISTEN_ADDR: ${LISTEN_ADDR:-:3000}
       PUBLIC_URL: ${PUBLIC_URL:-}
       SANDBOX_DOMAIN: ${SANDBOX_DOMAIN:-}
+      # State: Postgres when set, else a JSON file in E2B_DATA_DIR.
+      DATABASE_URL: ${DATABASE_URL:-}
+      # Host directory for everything that is not object storage.
+      E2B_DATA_DIR: ${E2B_DATA_DIR:-/var/lib/e2b}
+      # Templates and snapshots on S3 when S3_BUCKET is set.
+      S3_BUCKET: ${S3_BUCKET:-}
+      S3_BUILD_CACHE_BUCKET: ${S3_BUILD_CACHE_BUCKET:-}
+      S3_ENDPOINT: ${S3_ENDPOINT:-}
+      S3_REGION: ${S3_REGION:-}
+      S3_FORCE_PATH_STYLE: ${S3_FORCE_PATH_STYLE:-true}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+      AWS_REGION: ${AWS_REGION:-}
+      # Memory and CPU.
+      MEMORY_MODE: ${MEMORY_MODE:-regular}
       HUGEPAGES: ${HUGEPAGES:-2048}
-      PF_MIN_FREE_GIB: ${PF_MIN_FREE_GIB:-20}
+      SANDBOX_MEMORY_MAX: ${SANDBOX_MEMORY_MAX:-}
+      SANDBOX_MEMORY_MIN: ${SANDBOX_MEMORY_MIN:-256}
+      SANDBOX_CPU_MAX: ${SANDBOX_CPU_MAX:-}
+      DEFAULT_CPU_COUNT: ${DEFAULT_CPU_COUNT:-}
+      DEFAULT_MEMORY_MB: ${DEFAULT_MEMORY_MB:-4096}
       MAX_SANDBOX_HOURS: ${MAX_SANDBOX_HOURS:-24}
-      DEFAULT_CPU_COUNT: ${DEFAULT_CPU_COUNT:-2}
-      DEFAULT_MEMORY_MB: ${DEFAULT_MEMORY_MB:-512}
+      COLD_BOOT: ${COLD_BOOT:-false}
+      PF_MIN_FREE_GIB: ${PF_MIN_FREE_GIB:-20}
     volumes:
       # fetch-artifacts writes the binaries to the host and the API keeps its
       # state next to the templates in /var/lib/e2b.

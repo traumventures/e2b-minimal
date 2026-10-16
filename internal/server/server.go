@@ -42,9 +42,19 @@ type Config struct {
 	DefaultFreeDiskMB int64
 	DefaultCPUCount   int64
 	DefaultMemoryMB   int64
-	HugePages         bool
-	BaseImage         string
-	BootstrapBase     bool
+	// HugePages is the page size new template builds use.
+	HugePages bool
+	// CgroupRoot is the cgroup every sandbox runs under, with the limits for
+	// all sandboxes together.
+	CgroupRoot string
+	// MemoryMinMB is guaranteed to every running sandbox (cgroup memory.min);
+	// a create that cannot be guaranteed it is refused.
+	MemoryMinMB int64
+	// ColdBoot starts new sandboxes by booting the template\'s filesystem
+	// instead of restoring its memory snapshot.
+	ColdBoot      bool
+	BaseImage     string
+	BootstrapBase bool
 	// Fallbacks for builds whose metadata does not name the versions.
 	KernelVersion      string
 	FirecrackerVersion string
@@ -202,10 +212,12 @@ func (s *Server) publicBase(r *http.Request) string {
 	return scheme + "://" + r.Host
 }
 
-// rewriteUploadURL points an orchestrator upload URL at this server.
+// rewriteUploadURL points a local orchestrator upload URL at this server.
 func (s *Server) rewriteUploadURL(r *http.Request, raw string) string {
 	u, err := url.Parse(raw)
-	if err != nil {
+	// Only the orchestrator's own upload endpoint is rewritten; a presigned
+	// S3 URL already points where the client can upload.
+	if err != nil || u.Host != s.cfg.OrchestratorHTTP {
 		return raw
 	}
 	base, err := url.Parse(s.publicBase(r))

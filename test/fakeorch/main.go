@@ -31,6 +31,8 @@ type fake struct {
 	mu        sync.Mutex
 	sandboxes map[string]*orchestrator.SandboxCreateRequest
 	builds    map[string]time.Time
+
+	uploadAddr string
 }
 
 func (f *fake) Create(_ context.Context, r *orchestrator.SandboxCreateRequest) (*orchestrator.SandboxCreateResponse, error) {
@@ -140,7 +142,7 @@ func (f *fake) TemplateBuildDelete(_ context.Context, r *tm.TemplateBuildDeleteR
 }
 
 func (f *fake) InitLayerFileUpload(_ context.Context, r *tm.InitLayerFileUploadRequest) (*tm.InitLayerFileUploadResponse, error) {
-	u := "http://127.0.0.1:5008/upload?path=files/" + r.GetHash() + "&sig=fake"
+	u := "http://" + f.uploadAddr + "/upload?path=files/" + r.GetHash() + "&sig=fake"
 
 	return &tm.InitLayerFileUploadResponse{Present: false, Url: &u}, nil
 }
@@ -159,7 +161,7 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	f := &fake{sandboxes: map[string]*orchestrator.SandboxCreateRequest{}, builds: map[string]time.Time{}}
+	f := &fake{sandboxes: map[string]*orchestrator.SandboxCreateRequest{}, builds: map[string]time.Time{}, uploadAddr: *httpAddr}
 	s := grpc.NewServer()
 	orchestrator.RegisterSandboxServiceServer(s, f)
 	tm.RegisterTemplateServiceServer(s, f)

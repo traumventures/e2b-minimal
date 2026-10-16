@@ -4,12 +4,8 @@
 package store
 
 import (
-	"encoding/json"
-	"errors"
-	"fmt"
+	"context"
 	"maps"
-	"os"
-	"path/filepath"
 	"slices"
 	"sort"
 	"sync"
@@ -27,14 +23,17 @@ const (
 )
 
 type Build struct {
-	ID                 string    `json:"id"`
-	Status             string    `json:"status"`
-	Reason             string    `json:"reason,omitempty"`
-	ReasonStep         string    `json:"reasonStep,omitempty"`
-	CPUCount           int64     `json:"cpuCount"`
-	MemoryMB           int64     `json:"memoryMB"`
-	MinFreeDiskMB      int64     `json:"minFreeDiskMB"`
-	DiskSizeMB         int64     `json:"diskSizeMB"`
+	ID            string `json:"id"`
+	Status        string `json:"status"`
+	Reason        string `json:"reason,omitempty"`
+	ReasonStep    string `json:"reasonStep,omitempty"`
+	CPUCount      int64  `json:"cpuCount"`
+	MemoryMB      int64  `json:"memoryMB"`
+	MinFreeDiskMB int64  `json:"minFreeDiskMB"`
+	DiskSizeMB    int64  `json:"diskSizeMB"`
+	// RegularPages marks a build made on 4 KiB pages; its sandboxes must run
+	// on them too. Builds without the field used 2 MiB hugepages.
+	RegularPages       bool      `json:"regularPages,omitempty"`
 	EnvdVersion        string    `json:"envdVersion,omitempty"`
 	KernelVersion      string    `json:"kernelVersion,omitempty"`
 	FirecrackerVersion string    `json:"firecrackerVersion,omitempty"`
@@ -103,6 +102,7 @@ type Sandbox struct {
 	ClientID            string            `json:"clientID"`
 	ExecutionID         string            `json:"executionID"`
 	EnvdVersion         string            `json:"envdVersion"`
+	RegularPages        bool              `json:"regularPages,omitempty"`
 	KernelVersion       string            `json:"kernelVersion"`
 	FirecrackerVersion  string            `json:"firecrackerVersion"`
 	CPUCount            int64             `json:"cpuCount"`
@@ -131,44 +131,46 @@ type data struct {
 	Sandboxes map[string]*Sandbox  `json:"sandboxes"`
 }
 
-// Store guards all state with one mutex. Callers mutate inside Update and the
-// file is rewritten atomically afterwards; the data set is tiny.
+// Store keeps all state in memory under one mutex and writes every change
+// through to a backend: a JSON file, or Postgres when a database URL is set.
 type Store struct {
-	mu   sync.Mutex
-	path string
-	d    data
+	mu      sync.Mutex
+	backend backend
+	d       data
 }
 
-func Open(dir string) (*Store, error) {
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return nil, fmt.Errorf("create data dir: %w", err)
+type Options struct {
+	// Dir holds state.json when no DatabaseURL is set.
+	Dir string
+	// DatabaseURL selects the Postgres backend (postgres://...).
+	DatabaseURL string
+}
+
+func Open(ctx context.Context, opts Options) (*Store, error) {
+	var (
+		b   backend
+		err error
+	)
+	if opts.DatabaseURL != "" {
+		b, err = openPostgres(ctx, opts.DatabaseURL)
+	} else {
+		b, err = openFile(opts.Dir)
+	}
+	if err != nil {
+		return nil, err
 	}
 
-	s := &Store{
-		path: filepath.Join(dir, "state.json"),
-		d:    data{Templates: map[string]*Template{}, Sandboxes: map[string]*Sandbox{}},
-	}
+	s := &Store{backend: b, d: data{Templates: map[string]*Template{}, Sandboxes: map[string]*Sandbox{}}}
+	if err := b.load(ctx, &s.d); err != nil {
+		b.close()
 
-	raw, err := os.ReadFile(s.path)
-	switch {
-	case errors.Is(err, os.ErrNotExist):
-		return s, nil
-	case err != nil:
-		return nil, fmt.Errorf("read state: %w", err)
-	}
-
-	if err := json.Unmarshal(raw, &s.d); err != nil {
-		return nil, fmt.Errorf("parse %s: %w", s.path, err)
-	}
-	if s.d.Templates == nil {
-		s.d.Templates = map[string]*Template{}
-	}
-	if s.d.Sandboxes == nil {
-		s.d.Sandboxes = map[string]*Sandbox{}
+		return nil, err
 	}
 
 	return s, nil
 }
+
+func (s *Store) Close() { s.backend.close() }
 
 // Tx is the view a caller gets inside View/Update.
 type Tx struct{ d *data }
@@ -246,19 +248,10 @@ func (s *Store) Update(fn func(tx Tx) error) error {
 }
 
 func (s *Store) persist() error {
-	raw, err := json.MarshalIndent(&s.d, "", "  ")
-	if err != nil {
-		return fmt.Errorf("encode state: %w", err)
-	}
-	tmp := s.path + ".tmp"
-	if err := os.WriteFile(tmp, raw, 0o600); err != nil {
-		return fmt.Errorf("write state: %w", err)
-	}
-	if err := os.Rename(tmp, s.path); err != nil {
-		return fmt.Errorf("replace state: %w", err)
-	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
 
-	return nil
+	return s.backend.save(ctx, &s.d)
 }
 
 // Clone copies a sandbox so the stored record and a caller's working copy

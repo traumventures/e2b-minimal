@@ -1,0 +1,45 @@
+diff --git a/packages/orchestrator/pkg/sandbox/reboot.go b/packages/orchestrator/pkg/sandbox/reboot.go
+index 3ca8f18..da1443c 100644
+--- a/packages/orchestrator/pkg/sandbox/reboot.go
++++ b/packages/orchestrator/pkg/sandbox/reboot.go
+@@ -172,6 +172,12 @@ func (f *Factory) RebootSandbox(
+ 		return nil, fmt.Errorf("refusing to reboot build %s: not a filesystem-only snapshot and the request did not demand a filesystem boot", buildID)
+ 	}
+ 
++	// e2b-minimal: a cold boot gets the balloon the template was built with, so
++	// memory the guest frees goes back to the host like after a memory resume.
++	if meta.Balloon != nil && meta.Balloon.Reporting {
++		config.FreePageReporting = true
++	}
++
+ 	// An explicit maximum may resize the fresh VM; omission preserves its recorded capacity.
+ 	config.ConfiguredVmVcpus = rebootMaxVcpus(config.ConfiguredVmVcpus, meta.VcpuCount)
+ 
+diff --git a/packages/orchestrator/pkg/template/server/create_template.go b/packages/orchestrator/pkg/template/server/create_template.go
+index 8b7b04a..12e6704 100644
+--- a/packages/orchestrator/pkg/template/server/create_template.go
++++ b/packages/orchestrator/pkg/template/server/create_template.go
+@@ -5,6 +5,7 @@ package server
+ import (
+ 	"context"
+ 	"fmt"
++	"os"
+ 
+ 	"go.opentelemetry.io/otel"
+ 	"go.opentelemetry.io/otel/attribute"
+@@ -167,8 +168,13 @@ func (s *ServerStore) TemplateCreate(ctx context.Context, templateRequest *templ
+ 		}
+ 	}
+ 
+-	hugePages := fcInfo.HasHugePages()
+-	freePageReporting := fcInfo.HasFreePageReporting() && s.featureFlags.BoolFlag(ctx, featureflags.FreePageReportingFlag)
++	// e2b-minimal: TEMPLATE_HUGE_PAGES=false builds templates on regular 4 KiB
++	// pages, so sandboxes take host memory on demand, and
++	// TEMPLATE_FREE_PAGE_REPORTING=true hands memory the guest frees back to the
++	// host. Both stand in for LaunchDarkly, which this deployment does not run.
++	hugePages := fcInfo.HasHugePages() && os.Getenv("TEMPLATE_HUGE_PAGES") != "false"
++	freePageReporting := fcInfo.HasFreePageReporting() &&
++		(os.Getenv("TEMPLATE_FREE_PAGE_REPORTING") == "true" || s.featureFlags.BoolFlag(ctx, featureflags.FreePageReportingFlag))
+ 	freePageHinting := fcInfo.HasFreePageHinting() && featureflags.IsFreePageHintingEnabled(ctx, s.featureFlags)
+ 
+ 	childSpan.SetAttributes(

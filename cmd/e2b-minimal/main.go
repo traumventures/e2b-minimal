@@ -56,6 +56,9 @@ func run() error {
 		DefaultCPUCount:    envInt("DEFAULT_CPU_COUNT", 2),
 		DefaultMemoryMB:    envInt("DEFAULT_MEMORY_MB", 512),
 		HugePages:          env("HUGE_PAGES", "true") == "true",
+		CgroupRoot:         env("SANDBOX_CGROUP_ROOT", ""),
+		MemoryMinMB:        envInt("SANDBOX_MEMORY_MIN", 0),
+		ColdBoot:           env("COLD_BOOT", "false") == "true",
 		BaseImage:          env("BASE_IMAGE", "e2bdev/base"),
 		BootstrapBase:      env("BOOTSTRAP_BASE", "true") == "true",
 		KernelVersion:      env("E2B_KERNEL_VERSION", ""),
@@ -65,18 +68,22 @@ func run() error {
 		return errors.New("E2B_API_KEY must be set (at least 16 characters, e.g. e2b_$(openssl rand -hex 20))")
 	}
 
-	st, err := store.Open(env("DATA_DIR", "/var/lib/e2b-minimal"))
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
+	defer stop()
+
+	st, err := store.Open(ctx, store.Options{
+		Dir:         env("DATA_DIR", "/var/lib/e2b-minimal"),
+		DatabaseURL: env("DATABASE_URL", ""),
+	})
 	if err != nil {
 		return err
 	}
+	defer st.Close()
 	srv, err := server.New(cfg, st)
 	if err != nil {
 		return err
 	}
 	defer srv.Close()
-
-	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
-	defer stop()
 
 	httpSrv := &http.Server{
 		Addr:              env("LISTEN_ADDR", ":3000"),
@@ -103,6 +110,7 @@ func run() error {
 				slog.Error("bootstrap base template", "err", err)
 			}
 		}
+		go srv.RunMemoryWatchdog(ctx)
 		srv.RunReaper(ctx)
 	}()
 

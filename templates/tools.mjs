@@ -41,9 +41,10 @@ export const tools = Template()
   .runCmd('uv --version && python --version && bun --version && typst --version')
 
 if (import.meta.url === `file://${process.argv[1]}`) {
+  // No cpuCount/memoryMB: the server's defaults apply (all cores and
+  // DEFAULT_MEMORY_MB); with MEMORY_MODE=regular a sandbox only takes the
+  // memory it uses.
   const info = await Template.build(tools, 'tools', {
-    cpuCount: 2,
-    memoryMB: 1024,
     onBuildLogs: (e) => console.log(String(e)),
   })
   console.log(`built tools: ${info.templateId}`)

@@ -97,6 +97,7 @@ func (s *Server) newBuild(name string, cpu, mem, minFree *int64) (buildRef, erro
 			CPUCount:      or(cpu, s.cfg.DefaultCPUCount),
 			MemoryMB:      or(mem, s.cfg.DefaultMemoryMB),
 			MinFreeDiskMB: or(minFree, s.cfg.DefaultFreeDiskMB),
+			RegularPages:  !s.cfg.HugePages,
 			CreatedAt:     now,
 		}
 		t.Builds = append(t.Builds, b)

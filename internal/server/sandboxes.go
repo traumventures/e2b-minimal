@@ -21,7 +21,12 @@ import (
 	"github.com/traumventures/e2b-minimal/internal/store"
 )
 
-const defaultTimeout = 300 * time.Second
+const (
+	defaultTimeout = 300 * time.Second
+	// syncInterval is how often sandboxes the orchestrator lost (a crash, an
+	// OOM kill at SANDBOX_MEMORY_MAX) are dropped from the store.
+	syncInterval = 5 * time.Second
+)
 
 type networkBody struct {
 	AllowPublicTraffic *bool    `json:"allowPublicTraffic"`
@@ -236,6 +241,7 @@ func (s *Server) createSandbox(w http.ResponseWriter, r *http.Request) {
 		CPUCount:            build.CPUCount,
 		MemoryMB:            build.MemoryMB,
 		DiskSizeMB:          build.DiskSizeMB,
+		RegularPages:        build.RegularPages,
 		EnvdAccessToken:     newToken(),
 		Metadata:            body.Metadata,
 		EnvVars:             body.EnvVars,
@@ -303,6 +309,9 @@ func firstName(names []string) string {
 // persists the result. sb must be claimed (Busy) by the caller; boot releases
 // it on success.
 func (s *Server) boot(ctx context.Context, sb *store.Sandbox, resume bool) error {
+	if err := s.admit(sb.ID); err != nil {
+		return err
+	}
 	sb.ExecutionID = newUUID()
 	allowInternet := sb.AllowInternetAccess
 
@@ -312,7 +321,7 @@ func (s *Server) boot(ctx context.Context, sb *store.Sandbox, resume bool) error
 		BaseTemplateId:      sb.TemplateID,
 		KernelVersion:       sb.KernelVersion,
 		FirecrackerVersion:  sb.FirecrackerVersion,
-		HugePages:           s.cfg.HugePages,
+		HugePages:           !sb.RegularPages,
 		SandboxId:           sb.ID,
 		ExecutionId:         sb.ExecutionID,
 		EnvVars:             sb.EnvVars,
@@ -340,11 +349,16 @@ func (s *Server) boot(ctx context.Context, sb *store.Sandbox, resume bool) error
 		}
 	}
 
-	resp, err := s.sbx.Create(ctx, &orchestrator.SandboxCreateRequest{
+	req := &orchestrator.SandboxCreateRequest{
 		Sandbox:   cfg,
 		StartTime: timestamppb.New(sb.StartedAt),
 		EndTime:   timestamppb.New(sb.EndAt),
-	})
+	}
+	if s.cfg.ColdBoot && !resume {
+		cold := true
+		req.FilesystemBoot = &cold
+	}
+	resp, err := s.sbx.Create(ctx, req)
 	if err != nil {
 		return err
 	}
@@ -353,7 +367,10 @@ func (s *Server) boot(ctx context.Context, sb *store.Sandbox, resume bool) error
 	sb.State = store.SandboxRunning
 	sb.Busy = false
 
-	return s.store.Update(func(tx store.Tx) error { tx.PutSandbox(sb.Clone()); return nil })
+	err = s.store.Update(func(tx store.Tx) error { tx.PutSandbox(sb.Clone()); return nil })
+	s.applyMemoryPromises()
+
+	return err
 }
 
 // claim marks a sandbox busy and returns a copy to work on. It fails with
@@ -736,6 +753,7 @@ func (s *Server) connect(w http.ResponseWriter, r *http.Request, timeoutSec *int
 func (s *Server) RunReaper(ctx context.Context) {
 	t := time.NewTicker(time.Second)
 	defer t.Stop()
+	var lastSync time.Time
 	for {
 		select {
 		case <-ctx.Done():
@@ -743,6 +761,13 @@ func (s *Server) RunReaper(ctx context.Context) {
 		case <-t.C:
 		}
 		now := time.Now()
+		if now.Sub(lastSync) >= syncInterval {
+			lastSync = now
+			if err := s.Reconcile(ctx); err != nil {
+				slog.Warn("sync with orchestrator", "err", err)
+			}
+			s.applyMemoryPromises()
+		}
 		var due []string
 		s.store.View(func(tx store.Tx) {
 			for _, sb := range tx.Sandboxes() {
@@ -799,13 +824,15 @@ func (s *Server) Reconcile(ctx context.Context) error {
 	s.store.View(func(tx store.Tx) {
 		for _, sb := range tx.Sandboxes() {
 			known[sb.ID] = true
-			if sb.State == store.SandboxRunning && !live[sb.ID] {
+			// A sandbox that booted after List was taken is not in it yet;
+			// only ones running for a while can have been lost.
+			if sb.State == store.SandboxRunning && !sb.Busy && !live[sb.ID] && time.Since(sb.StartedAt) > 30*time.Second {
 				lost = append(lost, sb.Clone())
 			}
 		}
 	})
 	for _, sb := range lost {
-		slog.Warn("sandbox no longer runs on the orchestrator, forgetting it", "sandbox", sb.ID)
+		slog.Warn("sandbox no longer runs on the orchestrator (crashed or OOM-killed), forgetting it", "sandbox", sb.ID)
 		s.deleteSnapshots(ctx, sb)
 		_ = s.store.Update(func(tx store.Tx) error { tx.DeleteSandbox(sb.ID); return nil })
 	}
@@ -820,6 +847,12 @@ func (s *Server) Reconcile(ctx context.Context) error {
 }
 
 func writeGRPCError(w http.ResponseWriter, op string, err error) {
+	if errors.Is(err, errNoMemory) {
+		slog.Warn(op, "err", err)
+		writeError(w, http.StatusServiceUnavailable, err.Error())
+
+		return
+	}
 	st, _ := status.FromError(err)
 	code := http.StatusInternalServerError
 	switch st.Code() {
