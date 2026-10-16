@@ -73,6 +73,7 @@ jobs:
           set -a; . ./.env; set +a
           export E2B_API_URL=http://127.0.0.1:3000 E2B_SANDBOX_URL=http://127.0.0.1:3000
           (cd test/sdk && npm install --no-audit --no-fund && node lifecycle.mjs --exec)
+          (cd test/sdk && node compat.mjs sandbox commands files pty git templates)
           python3 -m pip install --user --break-system-packages e2b
           python3 test/sdk/lifecycle.py --exec
       - name: Logs
