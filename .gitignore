@@ -4,3 +4,6 @@ node_modules/
 .venv/
 test/sdk/bun.lock
 test/sdk/package-lock.json
+templates/node_modules/
+templates/package-lock.json
+templates/bun.lock
