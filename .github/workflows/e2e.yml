@@ -48,8 +48,9 @@ jobs:
           umask 077
           {
             echo "E2B_API_KEY=e2b_$(openssl rand -hex 20)"
-            echo "HUGEPAGES=1024"
-            echo "DEFAULT_MEMORY_MB=512"
+            echo "MEMORY_MODE=regular"
+            echo "SANDBOX_MEMORY_MAX=6144"
+            echo "DEFAULT_MEMORY_MB=2048"
             echo "PF_MIN_FREE_GIB=10"
           } > .env
           docker compose up -d --build

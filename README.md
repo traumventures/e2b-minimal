@@ -1,12 +1,18 @@
 # e2b-minimal
 
-E2B sandboxes in **one container with one API key**. It runs the released E2B
-orchestrator (Firecracker microVMs, the same binary E2B Embed uses) and puts a
-small API in front of it. The API speaks the subset of the E2B REST API the
-official SDKs use, so `e2b` for JavaScript and Python work unchanged.
+E2B sandboxes in **one container with one API key**. It runs the E2B
+orchestrator (Firecracker microVMs, built from E2B's public source with one
+small patch) and puts a small API in front of it. The API speaks the subset of
+the E2B REST API the official SDKs use, so `e2b` for JavaScript and Python
+work unchanged.
 
-No Postgres, Redis, ClickHouse, S3, dashboard, teams or users. State is one
-JSON file; templates and snapshots live on the host's disk.
+No Redis, ClickHouse, dashboard, teams or users. Optional pieces:
+
+| Piece | Default | Optional |
+| --- | --- | --- |
+| API state (templates, builds, sandboxes) | JSON file in `E2B_DATA_DIR` | Postgres (`DATABASE_URL`) |
+| Templates and snapshots | `E2B_DATA_DIR/storage` | any S3-compatible bucket (`S3_BUCKET`) |
+| Sandbox disks, snapshot cache | `E2B_DATA_DIR` on the host (own disk or mount if you like) | |
 
 ```
  SDK ──HTTP──▶ e2b-minimal API (:3000) ──gRPC──▶ orchestrator (:5008)
@@ -22,10 +28,7 @@ The orchestrator needs the host, like E2B Embed does:
 - Docker with a privileged container in the host's network, PID and cgroup
   namespaces
 - at least 20 GiB free on `/` (templates, snapshots, build cache)
-- 2 MiB hugepages for VM memory: every running sandbox and every build VM
-  takes its memory from them. `HUGEPAGES=2048` reserves 4 GiB; the host must
-  be able to give them, which needs free, unfragmented memory (best set right
-  after boot)
+- cgroup v2
 
 The container checks all of this on start (`preflight.sh`) and says what to
 fix.
@@ -95,15 +98,66 @@ Unsupported routes answer `501`.
 | --- | --- | --- |
 | `E2B_API_KEY` | required | The one key, sent by the SDKs as `X-API-Key` |
 | `LISTEN_ADDR` | `:3000` | API listen address (host network) |
-| `PUBLIC_URL` | from the request | How clients reach the API; used for template upload URLs |
+| `PUBLIC_URL` | from the request | How clients reach the API; used for local template upload URLs |
 | `SANDBOX_DOMAIN` | unset | Domain returned for `getHost()` URLs |
-| `HUGEPAGES` | `2048` | 2 MiB pages reserved on start |
+| `DATABASE_URL` | unset | Postgres for the API state; unset uses `E2B_DATA_DIR/minimal/state.json` |
+| `S3_BUCKET` | unset | Bucket for templates and snapshots; unset keeps them in `E2B_DATA_DIR/storage` |
+| `S3_BUILD_CACHE_BUCKET` | unset | Bucket for the template build cache (layers, uploaded files) |
+| `S3_ENDPOINT`, `S3_REGION`, `S3_FORCE_PATH_STYLE` | AWS, unset, `true` | For S3-compatible stores (MinIO, SeaweedFS, R2, Hetzner, …) |
+| `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_REGION` | unset | S3 credentials |
+| `E2B_DATA_DIR` | `/var/lib/e2b` | Host directory for everything else |
+| `MEMORY_MODE` | `regular` | `regular` or `hugepages`, see below |
+| `SANDBOX_MEMORY_MAX` | unset (no limit) | MiB for all sandboxes together |
+| `SANDBOX_MEMORY_MIN` | `256` | MiB guaranteed to every running sandbox (`regular` only) |
+| `SANDBOX_CPU_MAX` | unset (no limit) | Cores for all sandboxes together |
+| `DEFAULT_CPU_COUNT`, `DEFAULT_MEMORY_MB` | all cores, `4096` | Size of `base` and of builds that do not ask: the most one sandbox can use |
+| `COLD_BOOT` | `false` | Boot new sandboxes instead of restoring the template's memory snapshot |
+| `HUGEPAGES` | `2048` | 2 MiB pages reserved on start (`hugepages` only) |
 | `MAX_SANDBOX_HOURS` | `24` | Upper bound for timeouts |
-| `DEFAULT_CPU_COUNT`, `DEFAULT_MEMORY_MB` | `2`, `512` | Size of `base` and of builds that do not ask |
 | `BUILD_DISK_MB`, `DEFAULT_FREE_DISK_MB` | `10240`, `1024` | Build working space and free space left in a template |
 | `BASE_IMAGE`, `BOOTSTRAP_BASE` | `e2bdev/base`, `true` | The `base` template built on first start |
 | `PF_MIN_FREE_GIB` | `20` | Disk check in preflight |
 | `SKIP_HOST_SETUP` | `0` | `1` skips preflight, host setup and downloads |
+
+Only one API may use a Postgres database; a second one refuses to start.
+
+## Memory and CPU
+
+A sandbox's size (vCPUs, RAM) comes from its template. Templates that do not
+ask for a size get all host cores and `DEFAULT_MEMORY_MB`, so that is the most
+one sandbox can use, not what it takes.
+
+**`MEMORY_MODE=regular` (default).** Sandboxes take host memory as they touch
+it, and memory the guest frees goes back to the host within seconds (free
+page reporting). An idle sandbox takes about 30 MiB. Limits and guarantees:
+
+- `SANDBOX_MEMORY_MAX` caps all sandboxes together (`memory.max` on the
+  `e2b` cgroup), so the host never runs short.
+- Every running sandbox is guaranteed `SANDBOX_MEMORY_MIN` (`memory.min`).
+  A create or resume that could not be guaranteed it, because the guarantees
+  would exceed the limit or that much is not free right now, is refused with
+  `503`; the SDKs retry.
+- Above its guarantee a sandbox uses what is free. When all sandboxes
+  together get within 5 % of the limit, the API kills the one using the most
+  memory. Without that, the kernel OOM killer would kill sandboxes that did
+  nothing: the guest memory of a killed Firecracker is only freed when the
+  orchestrator ends the sandbox.
+
+Fresh memory is slow in a sandbox restored from the template's memory
+snapshot: it comes in at about 50–70 MB/s the first time, and again after the
+host took it back. `COLD_BOOT=true` boots new sandboxes from the template's
+disk instead (about 1.5 s to start instead of 0.2 s); memory then comes at
+full speed (about 700 MB/s on first touch). Resuming a paused sandbox always
+restores its memory.
+
+**`MEMORY_MODE=hugepages`.** E2B's default: VM memory comes from
+`HUGEPAGES` 2 MiB pages reserved at start. The pool is a hard limit; a sandbox
+that cannot get pages fails to start. The pool needs free, unfragmented memory
+on the host (best right after boot). Templates built in one mode only run in
+that mode.
+
+**CPU.** `SANDBOX_CPU_MAX` caps all sandboxes together (`cpu.max`); within
+that, each sandbox uses up to its vCPUs.
 
 ## Security
 
@@ -116,9 +170,15 @@ Unsupported routes answer `501`.
 
 ## Data and teardown
 
-- `/var/lib/e2b/storage`: templates, snapshots, build cache (orchestrator)
-- `/var/lib/e2b/minimal/state.json`: templates, builds, sandboxes (API)
-- `/var/lib/e2b/bin`, `/fc-*`: downloaded binaries, kernel
+Under `E2B_DATA_DIR` (default `/var/lib/e2b`):
+
+- `storage/`: templates, snapshots, build cache, unless they are on S3
+- `orchestrator/`: local cache of templates and snapshots in use
+- `fc-vm/`: running sandboxes
+- `minimal/state.json`: templates, builds, sandboxes, unless in Postgres
+
+Fixed host paths: `/var/lib/e2b/bin` (orchestrator) and `/fc-*` (envd,
+kernel, Firecracker, BusyBox).
 
 `docker compose down` stops every sandbox. Paused sandboxes and templates
 stay. To undo the host changes (nbd, hugepages, sysctl and modprobe files):
@@ -142,6 +202,16 @@ Python): base template build, `Template.build` with a `COPY` upload,
 commands, files, PTY, a sandbox port via `getHost()`, pause and resume with
 memory kept, timeout kill and auto-pause, and a container restart (paused
 sandboxes resume, lost running ones are dropped).
+
+Also verified there: the SDK suites with state in Postgres and templates,
+snapshots and build cache on S3 (SeaweedFS), a paused sandbox surviving a
+restart on that setup, a second API refused on the same database;
+`MEMORY_MODE=regular` with a 4 GiB template (idle sandbox ~30 MiB, 1.9 GiB
+touched and freed back to ~0.5 GiB within 10 s), admission (a sixth sandbox
+refused at `SANDBOX_MEMORY_MAX=6144`, `SANDBOX_MEMORY_MIN=1024`), an
+overload by three sandboxes taking 3 GiB each (two of them killed by the API,
+the other three alive, no kernel OOM kill), and `SANDBOX_CPU_MAX=4` holding a
+12-vCPU sandbox at 4.0 cores.
 
 `.github/workflows/e2e.yml` runs both: the fake suite, and the real stack on
 the runner's KVM.
