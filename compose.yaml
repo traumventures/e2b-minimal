@@ -12,7 +12,7 @@ services:
     cgroup: host
     privileged: true
     environment:
-      E2B_API_KEY: ${E2B_API_KEY:?set E2B_API_KEY in .env}
+      E2B_API_KEY: ${E2B_API_KEY:-}
       LISTEN_ADDR: ${LISTEN_ADDR:-:3000}
       PUBLIC_URL: ${PUBLIC_URL:-}
       SANDBOX_DOMAIN: ${SANDBOX_DOMAIN:-}

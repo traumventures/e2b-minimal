@@ -2,7 +2,7 @@
 
 # e2b-minimal
 
-**Self-hosted [E2B](https://e2b.dev) sandboxes in one container, with one API key.**
+**Self-hosted [E2B](https://e2b.dev) sandboxes in one container. No accounts, no API keys.**
 
 Firecracker microVMs, driven by the official `e2b` SDKs for JavaScript and Python, unchanged.
 No Redis, no ClickHouse, no dashboard, no teams.
@@ -36,7 +36,7 @@ speaks the part of the E2B REST API the SDKs use.
 | --- | --- | --- |
 | Containers | ~20 | **1** |
 | Required services | Postgres, Redis, ClickHouse, Vector | **none** |
-| Auth | teams, users, API keys | **one key from an env var** |
+| Auth | teams, users, API keys | **none** (optional single key) |
 | API state | Postgres | **SQLite file**, or Postgres |
 | Templates and snapshots | local disk | local disk, or **any S3** |
 | VM memory | fixed hugepage pool | **on demand**, global cap, per-sandbox guarantee |
@@ -50,7 +50,6 @@ free disk. The container checks all of this on start and tells you what to fix.
 ```bash
 git clone https://github.com/traumventures/e2b-minimal && cd e2b-minimal
 cp .env.example .env
-echo "E2B_API_KEY=e2b_$(openssl rand -hex 20)" >> .env
 docker compose up -d --build        # first build compiles the orchestrator, a few minutes
 docker compose logs -f              # wait for "template build ready"
 ```
@@ -64,8 +63,12 @@ Then point the SDK at it. API and sandbox traffic share one address:
 ```bash
 export E2B_API_URL=http://your-host:3000
 export E2B_SANDBOX_URL=http://your-host:3000
-export E2B_API_KEY=<the key from .env>
+export E2B_API_KEY=unused     # the SDKs refuse to start without one; the server ignores it
 ```
+
+There is no authentication by default: anyone who can reach port 3000 can
+start sandboxes. Keep it on a private network, or set `E2B_API_KEY` on the
+server to require that key (see [Security](#security)).
 
 ## Use it
 
@@ -229,7 +232,7 @@ All settings are environment variables, see [`.env.example`](.env.example).
 
 | Variable | Default | |
 | --- | --- | --- |
-| `E2B_API_KEY` | **required** | The one API key |
+| `E2B_API_KEY` | unset (no check) | Optional key every API request must carry |
 | `LISTEN_ADDR` | `:3000` | API address on the host network |
 | `PUBLIC_URL` | from request | How clients reach the API (for template upload URLs) |
 | `SANDBOX_DOMAIN` | | Domain for `getHost()` URLs |
@@ -252,8 +255,12 @@ All settings are environment variables, see [`.env.example`](.env.example).
 
 ## Security
 
-- The API speaks plain HTTP. Keep it on a private network or put TLS in front.
-- Every API route needs the key. Sandbox traffic does not: envd checks each
+- **No authentication by default.** Whoever reaches the API can run code in
+  sandboxes. Keep it on a private network (loopback, VPN, Tailscale) or set
+  `E2B_API_KEY` on the server; then every API route needs that key as
+  `X-API-Key` or `Authorization: Bearer`, and clients set the same value.
+- The API speaks plain HTTP. Put TLS in front if it leaves the host.
+- Sandbox traffic never needs the API key: envd checks each
   sandbox's own access token, other ports are open unless a sandbox was
   created with `network: { allowPublicTraffic: false }`.
 - The container is privileged and runs the orchestrator on the host. Give it

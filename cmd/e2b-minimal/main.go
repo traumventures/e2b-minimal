@@ -64,8 +64,11 @@ func run() error {
 		KernelVersion:      env("E2B_KERNEL_VERSION", ""),
 		FirecrackerVersion: env("E2B_FIRECRACKER_VERSION", ""),
 	}
-	if len(cfg.APIKey) < 16 {
-		return errors.New("E2B_API_KEY must be set (at least 16 characters, e.g. e2b_$(openssl rand -hex 20))")
+	switch {
+	case cfg.APIKey == "":
+		slog.Warn("E2B_API_KEY is not set: the API accepts every request, keep it on a private network")
+	case len(cfg.APIKey) < 16:
+		return errors.New("E2B_API_KEY is too short (at least 16 characters, e.g. e2b_$(openssl rand -hex 20)); leave it unset to turn the check off")
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)

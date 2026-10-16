@@ -26,6 +26,8 @@ import (
 )
 
 type Config struct {
+	// APIKey, when set, is required on every API request. Empty turns the
+	// check off.
 	APIKey string
 	// PublicURL is how SDK clients reach this server. Only used to rewrite
 	// template file upload URLs; empty derives it from the request.
@@ -190,7 +192,12 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// authorized checks the API key. Without a configured key every request is
+// allowed.
 func (s *Server) authorized(r *http.Request) bool {
+	if s.cfg.APIKey == "" {
+		return true
+	}
 	key := r.Header.Get("X-API-Key")
 	if key == "" {
 		key, _ = strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")

@@ -5,7 +5,6 @@
 set -euo pipefail
 
 S=/opt/e2b/scripts
-: "${E2B_API_KEY:?set E2B_API_KEY, e.g. e2b_\$(openssl rand -hex 20)}"
 
 log() { echo "entrypoint: $*"; }
 die() { echo "entrypoint: $*" >&2; exit 1; }

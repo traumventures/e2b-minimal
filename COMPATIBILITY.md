@@ -151,7 +151,7 @@ far as the template has `git` (the `base` template does).
 
 | Feature | Status | Notes |
 | --- | --- | --- |
-| One API key (`X-API-Key` or `Authorization: Bearer`) | ✅ | |
+| Auth | ✅ | none by default; optional single key via `E2B_API_KEY` (`X-API-Key` or `Authorization: Bearer`). Clients still need some `E2B_API_KEY` value, the SDKs require one |
 | Teams, users, per-key permissions | ❌ | by design |
 | Dashboard | ❌ | by design |
 | Sandbox and build logs API | ⚠️ | build logs yes, sandbox logs no |
