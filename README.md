@@ -191,14 +191,16 @@ One API per database or `state.db`: a second one refuses to start.
 
 ## What is supported
 
-| Area | Supported | Not (yet) |
-| --- | --- | --- |
-| Sandboxes | create, connect, getInfo, list with state and metadata filters, setTimeout, kill, metadata, env vars, internet on/off, `allowOut`/`denyOut`, private traffic tokens | fork, snapshot API, volumes, secrets, MCP, IAM, network update, metrics, logs |
-| Lifecycle | timeout kill, `autoPause` on timeout, pause, resume via `connect` | auto-resume on traffic |
-| Inside the VM | commands, PTY, files, watchers, git helpers, ports | |
-| Templates | `Template.build`: from image or template, private registries, `COPY`, start and ready commands; list, delete, alias lookup | tags (`name:tag` builds `name`), public templates |
+Everything inside a sandbox works as on E2B Cloud: commands, PTY, files,
+watchers, git helpers and ports go straight to E2B's own `envd` in the VM.
+The control plane covers create, connect, list, timeouts, pause and resume
+(also on timeout) and `Template.build`.
 
-Anything else answers `501`.
+Not supported: fork, the snapshot API, volumes, secrets, MCP, template tags,
+auto-resume on traffic and network updates after create. Those routes answer
+`501`.
+
+**Method-by-method checklist: [COMPATIBILITY.md](COMPATIBILITY.md).**
 
 ## Configuration
 
