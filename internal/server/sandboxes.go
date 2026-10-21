@@ -394,7 +394,7 @@ func (s *Server) boot(ctx context.Context, sb *store.Sandbox, resume bool) error
 		cold := true
 		req.FilesystemBoot = &cold
 	}
-	resp, err := s.sbx.Create(ctx, req)
+	resp, err := createRetrying(ctx, s.sbx, req, startRetryWait)
 	if err != nil {
 		return err
 	}
@@ -907,4 +907,34 @@ func writeGRPCError(w http.ResponseWriter, op string, err error) {
 	}
 	slog.Error(op, "err", err)
 	writeError(w, code, fmt.Sprintf("%s: %s", op, st.Message()))
+}
+
+// startRetryWait is how long a create waits in total for the node's start
+// slots. The orchestrator starts only a few sandboxes at once and answers
+// ResourceExhausted beyond that; the official SDKs do not retry, so parallel
+// creates (a test suite, an agent's parallel tool calls) would fail.
+const startRetryWait = 30 * time.Second
+
+// createRetrying creates the sandbox, waiting with backoff while the node has
+// no start slot free, at most `wait` in total. Any other error returns at once.
+func createRetrying(
+	ctx context.Context,
+	client orchestrator.SandboxServiceClient,
+	req *orchestrator.SandboxCreateRequest,
+	wait time.Duration,
+) (*orchestrator.SandboxCreateResponse, error) {
+	deadline := time.Now().Add(wait)
+	delay := 100 * time.Millisecond
+	for {
+		resp, err := client.Create(ctx, req)
+		if status.Code(err) != codes.ResourceExhausted || time.Now().Add(delay).After(deadline) {
+			return resp, err
+		}
+		select {
+		case <-ctx.Done():
+			return nil, err
+		case <-time.After(delay):
+		}
+		delay = min(delay*2, 2*time.Second)
+	}
 }
