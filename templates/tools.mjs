@@ -7,7 +7,7 @@
 // Then: Sandbox.create('tools')
 import { Template } from 'e2b'
 
-const BUN_VERSION = '1.4.3'
+const BUN_VERSION = '1.4.4'
 const UV_VERSION = '0.13.1'
 const TYPST_VERSION = '0.15.1'
 
